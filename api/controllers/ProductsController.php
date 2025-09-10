@@ -1,119 +1,99 @@
 <?php
-// api/controllers/ProductsController.php
 
-require_once __DIR__ . '/../core/Database.php';
-require_once __DIR__ . '/../models/ProductModel.php';
+// Include necessary models.
+require_once '..\models\ProductModel.php';
+require_once '..\models\LogModel.php';
 
 class ProductsController {
+    private $db;
     private $productModel;
-    private $tenantId;
+    private $logModel;
 
-    public function __construct($db) {
-        $this->productModel = new ProductModel($db);
-        $headers = getallheaders();
-        $this->tenantId = $headers['X-Tenant-Id'] ?? null;
-    }
-
-    private function getTenantId() {
-        if (empty($this->tenantId)) {
-            http_response_code(400);
-            echo json_encode(["error" => "Tenant ID header is missing."]);
-            return null;
-        }
-        return $this->tenantId;
+    public function __construct($db, $logModel) {
+        $this->db = $db;
+        $this->productModel = new ProductModel($this->db);
+        $this->logModel = $logModel;
     }
 
     public function createProduct() {
-        header("Content-Type: application/json");
-        $tenantId = $this->getTenantId();
-        if (!$tenantId) return;
-
-        $data = json_decode(file_get_contents("php://input"), true);
-        if ($data === null) {
-            http_response_code(400);
-            echo json_encode(["error" => "Invalid JSON payload."]);
-            return;
-        }
+        $data = json_decode(file_get_contents("php://input"));
         
-        $requiredFields = ['categoryId', 'name', 'description', 'price'];
-        foreach ($requiredFields as $field) {
-            if (!isset($data[$field])) {
-                http_response_code(400);
-                echo json_encode(["error" => "Required field '{$field}' is missing."]);
-                return;
+        if (
+            !empty($data->name) &&
+            !empty($data->price) &&
+            !empty($data->category_id)
+        ) {
+            if ($this->productModel->create($data)) {
+                $this->logModel->logEvent('product_created', ['product_name' => $data->name]);
+                http_response_code(201);
+                echo json_encode(['message' => 'Product created successfully.']);
+            } else {
+                http_response_code(503);
+                echo json_encode(['error' => 'Unable to create product.']);
             }
-        }
-        
-        $productId = $this->productModel->create($tenantId, $data);
-        
-        if ($productId) {
-            http_response_code(201);
-            echo json_encode(["message" => "Product created successfully.", "productId" => $productId]);
         } else {
-            http_response_code(500);
-            echo json_encode(["error" => "Error creating product."]);
+            http_response_code(400);
+            echo json_encode(['error' => 'Incomplete data.']);
         }
     }
 
+    // Retrieves all products for a specific tenant
     public function getAllProducts() {
-        header("Content-Type: application/json");
-        $tenantId = $this->getTenantId();
-        if (!$tenantId) return;
-
-        $products = $this->productModel->getAll($tenantId);
+        // NOTE: This placeholder tenantId will be replaced with a real ID from the authenticated user.
+        $tenantId = 'your_tenant_id_here'; 
+        $products = $this->productModel->read($tenantId);
         
-        http_response_code(200);
-        echo json_encode($products);
+        if ($products) {
+            http_response_code(200);
+            echo json_encode($products);
+        } else {
+            http_response_code(404);
+            echo json_encode(['message' => 'No products found.']);
+        }
     }
     
+    // Retrieves a single product by its ID for a specific tenant
     public function getProduct($id) {
-        header("Content-Type: application/json");
-        $tenantId = $this->getTenantId();
-        if (!$tenantId) return;
-
-        $product = $this->productModel->getOne($id, $tenantId);
+        // NOTE: This placeholder tenantId will be replaced with a real ID from the authenticated user.
+        $tenantId = 'your_tenant_id_here'; 
+        $product = $this->productModel->readOne($id, $tenantId);
         
         if ($product) {
             http_response_code(200);
             echo json_encode($product);
         } else {
             http_response_code(404);
-            echo json_encode(["error" => "Product not found."]);
+            echo json_encode(['message' => 'Product not found.']);
         }
     }
     
+    // Updates an existing product for a specific tenant
     public function updateProduct($id) {
-        header("Content-Type: application/json");
-        $tenantId = $this->getTenantId();
-        if (!$tenantId) return;
-
-        $data = json_decode(file_get_contents("php://input"), true);
-        if ($data === null) {
-            http_response_code(400);
-            echo json_encode(["error" => "Invalid JSON payload."]);
-            return;
-        }
-
+        $data = json_decode(file_get_contents("php://input"));
+        // NOTE: This placeholder tenantId will be replaced with a real ID from the authenticated user.
+        $tenantId = 'your_tenant_id_here';
+        
         if ($this->productModel->update($id, $tenantId, $data)) {
+            $this->logModel->logEvent('product_updated', ['product_id' => $id]);
             http_response_code(200);
-            echo json_encode(["message" => "Product updated successfully."]);
+            echo json_encode(['message' => 'Product updated successfully.']);
         } else {
-            http_response_code(500);
-            echo json_encode(["error" => "Error updating product."]);
+            http_response_code(503);
+            echo json_encode(['error' => 'Unable to update product.']);
         }
     }
-    
-    public function deleteProduct($id) {
-        header("Content-Type: application/json");
-        $tenantId = $this->getTenantId();
-        if (!$tenantId) return;
 
+    // Deletes a product by its ID for a specific tenant
+    public function deleteProduct($id) {
+        // NOTE: This placeholder tenantId will be replaced with a real ID from the authenticated user.
+        $tenantId = 'your_tenant_id_here';
         if ($this->productModel->delete($id, $tenantId)) {
+            $this->logModel->logEvent('product_deleted', ['product_id' => $id]);
             http_response_code(200);
-            echo json_encode(["message" => "Product deleted successfully."]);
+            echo json_encode(['message' => 'Product deleted successfully.']);
         } else {
-            http_response_code(500);
-            echo json_encode(["error" => "Error deleting product."]);
+            http_response_code(503);
+            echo json_encode(['error' => 'Unable to delete product.']);
         }
     }
 }

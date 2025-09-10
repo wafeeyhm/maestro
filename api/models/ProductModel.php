@@ -2,131 +2,108 @@
 // api/models/ProductModel.php
 
 class ProductModel {
+    // Database connection
     private $conn;
+    private $table_name = "products";
 
+    // Constructor to set up the database connection
     public function __construct($db) {
         $this->conn = $db;
     }
 
-    public function create($tenantId, $data) {
-        $sql = "INSERT INTO products (productId, tenantId, categoryId, name, description, baseCost, price, imageUrl, isActive) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)";
-        $stmt = $this->conn->prepare($sql);
+    // Method to create a new product record
+    public function create($data) {
+        // SQL query to insert a new product record.
+        // We're using a prepared statement to prevent SQL injection attacks.
+        $query = "INSERT INTO " . $this->table_name . "
+                  (productId, tenantId, categoryId, name, description, baseCost, price, imageUrl, isActive, createdAt) 
+                  VALUES (:productId, :tenantId, :categoryId, :name, :description, :baseCost, :price, :imageUrl, :isActive, NOW())";
         
-        if (!$stmt) {
-            error_log("Failed to prepare statement: " . $this->conn->error);
-            return false;
-        }
+        // Prepare the query statement.
+        $stmt = $this->conn->prepare($query);
 
-        $productId = 'prod-' . uniqid();
-        $isActive = (int) $data['isActive'];
+        // Bind the data. PDO handles sanitation, so manual stripping is not needed.
+        $productId = uniqid();
+        $isActive = 1; // Assuming new products are active by default
 
-        $stmt->bind_param(
-            "sssssddsi", 
-            $productId,
-            $tenantId, 
-            $data['categoryId'], 
-            $data['name'], 
-            $data['description'], 
-            $data['baseCost'], 
-            $data['price'], 
-            $data['imageUrl'], 
-            $isActive
-        );
+        $stmt->bindParam(":productId", $productId);
+        $stmt->bindParam(":tenantId", $data->tenantId); 
+        $stmt->bindParam(":categoryId", $data->categoryId);
+        $stmt->bindParam(":name", $data->name);
+        $stmt->bindParam(":description", $data->description);
+        $stmt->bindParam(":baseCost", $data->baseCost);
+        $stmt->bindParam(":price", $data->price);
+        $stmt->bindParam(":imageUrl", $data->imageUrl);
+        $stmt->bindParam(":isActive", $isActive);
 
+        // Execute the query
         if ($stmt->execute()) {
-            return $productId;
-        } else {
-            error_log("Error creating product: " . $stmt->error);
-            return false;
+            return true;
         }
+
+        return false;
     }
 
-    public function getAll($tenantId) {
-        $sql = "SELECT p.*, c.name AS categoryName FROM products p JOIN product_categories c ON p.categoryId = c.categoryId WHERE p.tenantId = ?";
-        $stmt = $this->conn->prepare($sql);
+    // Method to read all products for a specific tenant
+    public function read($tenantId) {
+        $query = "SELECT p.*, c.name AS categoryName 
+                  FROM " . $this->table_name . " p 
+                  JOIN product_categories c ON p.categoryId = c.categoryId 
+                  WHERE p.tenantId = :tenantId";
         
-        if (!$stmt) {
-            error_log("Failed to prepare statement: " . $this->conn->error);
-            return [];
-        }
-
-        $stmt->bind_param("s", $tenantId);
+        $stmt = $this->conn->prepare($query);
+        $stmt->bindParam(":tenantId", $tenantId);
         $stmt->execute();
-        $result = $stmt->get_result();
         
-        $products = [];
-        while ($row = $result->fetch_assoc()) {
-            $products[] = $row;
-        }
-        return $products;
+        // Use PDO::FETCH_ASSOC to get an associative array
+        return $stmt->fetchAll(PDO::FETCH_ASSOC);
     }
     
-    public function getOne($productId, $tenantId) {
-        $sql = "SELECT * FROM products WHERE productId = ? AND tenantId = ?";
-        $stmt = $this->conn->prepare($sql);
-
-        if (!$stmt) {
-            error_log("Failed to prepare statement: " . $this->conn->error);
-            return null;
-        }
-
-        $stmt->bind_param("ss", $productId, $tenantId);
-        $stmt->execute();
-        $result = $stmt->get_result();
+    // Method to read a single product by ID for a specific tenant
+    public function readOne($productId, $tenantId) {
+        $query = "SELECT * FROM " . $this->table_name . " WHERE productId = :productId AND tenantId = :tenantId";
         
-        return $result->fetch_assoc();
+        $stmt = $this->conn->prepare($query);
+        $stmt->bindParam(":productId", $productId);
+        $stmt->bindParam(":tenantId", $tenantId);
+        $stmt->execute();
+        
+        // Fetch a single row
+        return $stmt->fetch(PDO::FETCH_ASSOC);
     }
     
+    // Method to update an existing product
     public function update($productId, $tenantId, $data) {
         // Build the dynamic SQL query
-        $setParams = [];
-        $bindParams = [];
-        $bindTypes = "";
-        
+        $setParts = [];
         foreach ($data as $key => $value) {
-            $setParams[] = "`{$key}` = ?";
-            $bindParams[] = $value;
-            if (is_int($value)) {
-                $bindTypes .= 'i';
-            } elseif (is_float($value)) {
-                $bindTypes .= 'd';
-            } else {
-                $bindTypes .= 's';
-            }
+            $setParts[] = "`{$key}` = :{$key}";
         }
         
-        $sql = "UPDATE products SET " . implode(', ', $setParams) . " WHERE productId = ? AND tenantId = ?";
-        $bindTypes .= "ss"; // Add types for productId and tenantId
-        $bindParams[] = $productId;
-        $bindParams[] = $tenantId;
-
-        $stmt = $this->conn->prepare($sql);
-        if (!$stmt) {
-            error_log("Failed to prepare statement: " . $this->conn->error);
-            return false;
-        }
-
-        // We use call_user_func_array to handle the dynamic parameters
-        $refs = [];
-        foreach ($bindParams as $key => $value) {
-            $refs[$key] = &$bindParams[$key];
-        }
+        $query = "UPDATE " . $this->table_name . " SET " . implode(', ', $setParts) . " WHERE productId = :productId AND tenantId = :tenantId";
         
-        call_user_func_array([$stmt, 'bind_param'], array_merge([$bindTypes], $refs));
+        $stmt = $this->conn->prepare($query);
+        
+        // Bind parameters dynamically
+        foreach ($data as $key => &$value) {
+            $stmt->bindParam(":{$key}", $value);
+        }
+        unset($value); // Unset the reference
+        
+        $stmt->bindParam(":productId", $productId);
+        $stmt->bindParam(":tenantId", $tenantId);
 
         return $stmt->execute();
     }
     
+    // Method to delete a product by ID
     public function delete($productId, $tenantId) {
-        $sql = "DELETE FROM products WHERE productId = ? AND tenantId = ?";
-        $stmt = $this->conn->prepare($sql);
+        $query = "DELETE FROM " . $this->table_name . " WHERE productId = :productId AND tenantId = :tenantId";
         
-        if (!$stmt) {
-            error_log("Failed to prepare statement: " . $this->conn->error);
-            return false;
-        }
-
-        $stmt->bind_param("ss", $productId, $tenantId);
+        $stmt = $this->conn->prepare($query);
+        $stmt->bindParam(":productId", $productId);
+        $stmt->bindParam(":tenantId", $tenantId);
+        
         return $stmt->execute();
     }
 }

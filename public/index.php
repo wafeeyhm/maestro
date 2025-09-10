@@ -27,6 +27,7 @@ require_once '..\api\models\ProductCategoryModel.php';
 require_once '..\api\models\InventoryModel.php';
 require_once '..\api\models\SalesModel.php';
 require_once '..\api\models\CustomersModel.php';
+require_once '..\api\models\LogModel.php'; // Include the new LogModel
 
 // Get database connection
 $database = new Database();
@@ -46,7 +47,9 @@ $id = isset($pathParts[$apiIndex + 3]) ? $pathParts[$apiIndex + 3] : null;
 switch ($resource) {
     case 'auth':
         $authModel = new AuthModel($db);
-        $controller = new AuthController($authModel);
+        $logModel = new LogModel($db); // Instantiate the LogModel
+        // Pass both models to the AuthController constructor
+        $controller = new AuthController($authModel, $logModel); 
         if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if ($id === 'register') {
                 $controller->register();
@@ -63,7 +66,9 @@ switch ($resource) {
         break;
 
     case 'products':
-        $controller = new ProductsController($db);
+        $productModel = new ProductModel($db);
+        $logModel = new LogModel($db);
+        $controller = new ProductsController($productModel, $logModel);
         switch ($_SERVER['REQUEST_METHOD']) {
             case 'GET':
                 if ($id) {
