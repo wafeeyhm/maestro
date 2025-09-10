@@ -16,10 +16,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
 require_once '..\api\core\Database.php';
 require_once '..\api\controllers\AuthController.php';
 require_once '..\api\controllers\ProductsController.php';
-require_once '..\api\controllers\ProductCategoriesController.php'; // New controller
+require_once '..\api\controllers\ProductCategoriesController.php';
 require_once '..\api\controllers\InventoryController.php';
 require_once '..\api\controllers\SalesController.php';
 require_once '..\api\controllers\CustomersController.php';
+
+// Include the models that were created in the refactoring
+require_once '..\api\models\AuthModel.php';
+require_once '..\api\models\ProductCategoryModel.php';
+require_once '..\api\models\InventoryModel.php';
+require_once '..\api\models\SalesModel.php';
+require_once '..\api\models\CustomersModel.php';
 
 // Get database connection
 $database = new Database();
@@ -38,7 +45,8 @@ $id = isset($pathParts[$apiIndex + 3]) ? $pathParts[$apiIndex + 3] : null;
 // Routing logic based on the resource and HTTP method
 switch ($resource) {
     case 'auth':
-        $controller = new AuthController($db);
+        $authModel = new AuthModel($db);
+        $controller = new AuthController($authModel);
         if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if ($id === 'register') {
                 $controller->register();
@@ -91,7 +99,8 @@ switch ($resource) {
         break;
         
     case 'product-categories':
-        $controller = new ProductCategoriesController(); // Note: No $db passed
+        $productCategoryModel = new ProductCategoryModel($db);
+        $controller = new ProductCategoriesController($productCategoryModel);
         switch ($_SERVER['REQUEST_METHOD']) {
             case 'GET':
                 // Implement your GET logic here
@@ -109,7 +118,8 @@ switch ($resource) {
         break;
 
     case 'inventory':
-        $controller = new InventoryController($db);
+        $inventoryModel = new InventoryModel($db);
+        $controller = new InventoryController($inventoryModel);
         switch ($_SERVER['REQUEST_METHOD']) {
             case 'GET':
                 $controller->getAllInventory();
@@ -141,7 +151,8 @@ switch ($resource) {
         break;
 
     case 'sales':
-        $controller = new SalesController($db);
+        $salesModel = new SalesModel($db);
+        $controller = new SalesController($salesModel);
         switch ($_SERVER['REQUEST_METHOD']) {
             case 'GET':
                 if ($id) {
@@ -152,6 +163,43 @@ switch ($resource) {
                 break;
             case 'POST':
                 $controller->createSale();
+                break;
+            default:
+                http_response_code(405);
+                echo json_encode(['error' => 'Method Not Allowed']);
+                break;
+        }
+        break;
+
+    case 'customers':
+        $customersModel = new CustomersModel($db);
+        $controller = new CustomersController($customersModel);
+        switch ($_SERVER['REQUEST_METHOD']) {
+            case 'GET':
+                if ($id) {
+                    $controller->getCustomer($id);
+                } else {
+                    $controller->getAllCustomers();
+                }
+                break;
+            case 'POST':
+                $controller->createCustomer();
+                break;
+            case 'PUT':
+                if ($id) {
+                    $controller->updateCustomer($id);
+                } else {
+                    http_response_code(400);
+                    echo json_encode(['error' => 'Missing customer ID.']);
+                }
+                break;
+            case 'DELETE':
+                if ($id) {
+                    $controller->deleteCustomer($id);
+                } else {
+                    http_response_code(400);
+                    echo json_encode(['error' => 'Missing customer ID.']);
+                }
                 break;
             default:
                 http_response_code(405);

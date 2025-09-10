@@ -2,131 +2,118 @@
 // api/controllers/ProductsController.php
 
 require_once __DIR__ . '/../core/Database.php';
+require_once __DIR__ . '/../models/ProductModel.php';
 
 class ProductsController {
-    private $conn;
+    private $productModel;
     private $tenantId;
 
     public function __construct($db) {
-        $this->conn = $db;
+        $this->productModel = new ProductModel($db);
         $headers = getallheaders();
-        $this->tenantId = isset($headers['X-Tenant-Id']) ? $headers['X-Tenant-Id'] : die(json_encode(["error" => "Tenant ID not provided."]));
+        $this->tenantId = $headers['X-Tenant-Id'] ?? null;
     }
 
-    // Handles GET request to retrieve all products for the tenant
-    public function getAllProducts() {
-        $query = "SELECT productId, name, description, price, imageUrl, createdAt FROM products WHERE tenantId = ?";
-        $stmt = $this->conn->prepare($query);
-        $stmt->bind_param("s", $this->tenantId);
-        $stmt->execute();
-        $result = $stmt->get_result();
-
-        $products = [];
-        while ($row = $result->fetch_assoc()) {
-            $products[] = $row;
-        }
-
-        echo json_encode($products);
-    }
-
-    // Handles GET request to retrieve a single product by ID
-    public function getProduct($id) {
-        $query = "SELECT productId, name, description, price, imageUrl, createdAt FROM products WHERE productId = ? AND tenantId = ?";
-        $stmt = $this->conn->prepare($query);
-        $stmt->bind_param("ss", $id, $this->tenantId);
-        $stmt->execute();
-        $result = $stmt->get_result();
-
-        if ($result->num_rows > 0) {
-            $product = $result->fetch_assoc();
-            echo json_encode($product);
-        } else {
-            http_response_code(404);
-            echo json_encode(["message" => "Product not found."]);
-        }
-    }
-
-    // Handles POST request to create a new product
-    public function createProduct() {
-        $data = json_decode(file_get_contents("php://input"));
-
-        // A simple check to ensure all required data is present
-        if (!isset($data->categoryId) || !isset($data->name) || !isset($data->baseCost) || !isset($data->price)) {
+    private function getTenantId() {
+        if (empty($this->tenantId)) {
             http_response_code(400);
-            echo json_encode(["message" => "Incomplete product data."]);
+            echo json_encode(["error" => "Tenant ID header is missing."]);
+            return null;
+        }
+        return $this->tenantId;
+    }
+
+    public function createProduct() {
+        header("Content-Type: application/json");
+        $tenantId = $this->getTenantId();
+        if (!$tenantId) return;
+
+        $data = json_decode(file_get_contents("php://input"), true);
+        if ($data === null) {
+            http_response_code(400);
+            echo json_encode(["error" => "Invalid JSON payload."]);
             return;
         }
-
-        // Generate unique product ID
-        $productId = 'prod-' . bin2hex(random_bytes(6));
-
-        $query = "INSERT INTO products (productId, tenantId, categoryId, name, description, baseCost, price, imageUrl, isActive, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())";
-        $stmt = $this->conn->prepare($query);
-
-        // Bind parameters. 'sssssddsi' for 5 strings, 2 doubles, 1 string, 1 integer
-        $stmt->bind_param(
-            "sssssddsi", 
-            $productId, 
-            $this->tenantId, 
-            $data->categoryId, 
-            $data->name, 
-            $data->description, 
-            $data->baseCost,
-            $data->price, 
-            $data->imageUrl, 
-            $data->isActive
-        );
         
-        if ($stmt->execute()) {
+        $requiredFields = ['categoryId', 'name', 'description', 'price'];
+        foreach ($requiredFields as $field) {
+            if (!isset($data[$field])) {
+                http_response_code(400);
+                echo json_encode(["error" => "Required field '{$field}' is missing."]);
+                return;
+            }
+        }
+        
+        $productId = $this->productModel->create($tenantId, $data);
+        
+        if ($productId) {
             http_response_code(201);
             echo json_encode(["message" => "Product created successfully.", "productId" => $productId]);
         } else {
             http_response_code(500);
-            echo json_encode(["message" => "Failed to create product.", "error" => $stmt->error]);
+            echo json_encode(["error" => "Error creating product."]);
         }
     }
 
-    // Handles PUT request to update an existing product
-    public function updateProduct($id) {
-        $data = json_decode(file_get_contents("php://input"));
-        $query = "UPDATE products SET categoryId = ?, name = ?, description = ?, baseCost = ?, price = ?, imageUrl = ?, isActive = ?, updatedAt = NOW() WHERE productId = ? AND tenantId = ?";
-        $stmt = $this->conn->prepare($query);
+    public function getAllProducts() {
+        header("Content-Type: application/json");
+        $tenantId = $this->getTenantId();
+        if (!$tenantId) return;
 
-        // Bind parameters. 'ssdsdisss' for 3 strings, 1 double, 1 double, 1 string, 1 integer, 2 strings
-        $stmt->bind_param(
-            "sssddisss", 
-            $data->categoryId, 
-            $data->name, 
-            $data->description,
-            $data->baseCost,
-            $data->price, 
-            $data->imageUrl, 
-            $data->isActive, 
-            $id,
-            $this->tenantId
-        );
+        $products = $this->productModel->getAll($tenantId);
         
-        if ($stmt->execute()) {
+        http_response_code(200);
+        echo json_encode($products);
+    }
+    
+    public function getProduct($id) {
+        header("Content-Type: application/json");
+        $tenantId = $this->getTenantId();
+        if (!$tenantId) return;
+
+        $product = $this->productModel->getOne($id, $tenantId);
+        
+        if ($product) {
+            http_response_code(200);
+            echo json_encode($product);
+        } else {
+            http_response_code(404);
+            echo json_encode(["error" => "Product not found."]);
+        }
+    }
+    
+    public function updateProduct($id) {
+        header("Content-Type: application/json");
+        $tenantId = $this->getTenantId();
+        if (!$tenantId) return;
+
+        $data = json_decode(file_get_contents("php://input"), true);
+        if ($data === null) {
+            http_response_code(400);
+            echo json_encode(["error" => "Invalid JSON payload."]);
+            return;
+        }
+
+        if ($this->productModel->update($id, $tenantId, $data)) {
             http_response_code(200);
             echo json_encode(["message" => "Product updated successfully."]);
         } else {
             http_response_code(500);
-            echo json_encode(["message" => "Failed to update product.", "error" => $stmt->error]);
+            echo json_encode(["error" => "Error updating product."]);
         }
     }
-
-    // Handles DELETE request to delete a product by ID
+    
     public function deleteProduct($id) {
-        $query = "DELETE FROM products WHERE productId = ? AND tenantId = ?";
-        $stmt = $this->conn->prepare($query);
-        $stmt->bind_param("ss", $id, $this->tenantId);
+        header("Content-Type: application/json");
+        $tenantId = $this->getTenantId();
+        if (!$tenantId) return;
 
-        if ($stmt->execute()) {
+        if ($this->productModel->delete($id, $tenantId)) {
             http_response_code(200);
             echo json_encode(["message" => "Product deleted successfully."]);
         } else {
             http_response_code(500);
-            echo json_encode(["message" => "Failed to delete product.", "error" => $stmt->error]);
+            echo json_encode(["error" => "Error deleting product."]);
         }
     }
 }

@@ -1,44 +1,34 @@
 <?php
+// api/controllers/InventoryController.php
 
-require_once '../api/core/Database.php';
+require_once __DIR__ . '/../core/Database.php';
+require_once __DIR__ . '/../models/InventoryModel.php';
 
 class InventoryController {
-    private $conn;
+    private $inventoryModel;
+    private $tenantId;
 
     public function __construct($db) {
-        $this->conn = $db;
+        $this->inventoryModel = new InventoryModel($db);
+        $headers = getallheaders();
+        $this->tenantId = $headers['X-Tenant-Id'] ?? null;
+    }
+
+    private function getTenantId() {
+        if (empty($this->tenantId)) {
+            http_response_code(400);
+            echo json_encode(["error" => "Tenant ID header is missing."]);
+            return null;
+        }
+        return $this->tenantId;
     }
 
     public function getAllInventory() {
         header("Content-Type: application/json");
-        header("Access-Control-Allow-Origin: *");
+        $tenantId = $this->getTenantId();
+        if (!$tenantId) return;
 
-        $requestMethod = $_SERVER["REQUEST_METHOD"];
-        if ($requestMethod !== 'GET') {
-            http_response_code(405);
-            echo json_encode(["error" => "Method not allowed."]);
-            return;
-        }
-        
-        $tenantId = $_SERVER['HTTP_X_TENANT_ID'] ?? '';
-        if (empty($tenantId)) {
-            http_response_code(400);
-            echo json_encode(["error" => "Tenant ID header is missing."]);
-            return;
-        }
-        
-        $sql = "SELECT * FROM inventory WHERE tenantId = ?";
-        $stmt = $this->conn->prepare($sql);
-        $stmt->bind_param("s", $tenantId);
-        $stmt->execute();
-        $result = $stmt->get_result();
-        
-        $inventory = [];
-        if ($result->num_rows > 0) {
-            while ($row = $result->fetch_assoc()) {
-                $inventory[] = $row;
-            }
-        }
+        $inventory = $this->inventoryModel->getAll($tenantId);
         
         http_response_code(200);
         echo json_encode($inventory);
@@ -46,21 +36,8 @@ class InventoryController {
     
     public function createInventoryItem() {
         header("Content-Type: application/json");
-        header("Access-Control-Allow-Origin: *");
-        
-        $requestMethod = $_SERVER["REQUEST_METHOD"];
-        if ($requestMethod !== 'POST') {
-            http_response_code(405);
-            echo json_encode(["error" => "Method not allowed."]);
-            return;
-        }
-        
-        $tenantId = $_SERVER['HTTP_X_TENANT_ID'] ?? '';
-        if (empty($tenantId)) {
-            http_response_code(400);
-            echo json_encode(["error" => "Tenant ID header is missing."]);
-            return;
-        }
+        $tenantId = $this->getTenantId();
+        if (!$tenantId) return;
 
         $data = json_decode(file_get_contents("php://input"), true);
         if ($data === null) {
@@ -78,45 +55,24 @@ class InventoryController {
             }
         }
         
-        $itemId = 'INV-' . uniqid();
-        $productId = $data['productId'];
-        $name = $data['name'];
-        $quantity = (int) $data['quantity'];
-        $unit = $data['unit'];
-        
-        $sql = "INSERT INTO inventory (itemId, tenantId, productId, name, quantity, unit, lastUpdated) VALUES (?, ?, ?, ?, ?, ?, NOW())";
-        $stmt = $this->conn->prepare($sql);
-        $stmt->bind_param("sssiss", $itemId, $tenantId, $productId, $name, $quantity, $unit);
+        $itemId = $this->inventoryModel->create($tenantId, $data);
 
-        if ($stmt->execute()) {
+        if ($itemId) {
             http_response_code(201);
             echo json_encode(["message" => "Inventory item created successfully.", "itemId" => $itemId]);
         } else {
             http_response_code(500);
-            echo json_encode(["error" => "Error creating inventory item: " . $stmt->error]);
+            echo json_encode(["error" => "Error creating inventory item."]);
         }
     }
     
     public function updateInventoryItem($id) {
         header("Content-Type: application/json");
-        header("Access-Control-Allow-Origin: *");
-
-        $requestMethod = $_SERVER["REQUEST_METHOD"];
-        if ($requestMethod !== 'PUT') {
-            http_response_code(405);
-            echo json_encode(["error" => "Method not allowed."]);
-            return;
-        }
-
-        $tenantId = $_SERVER['HTTP_X_TENANT_ID'] ?? '';
-        if (empty($tenantId)) {
-            http_response_code(400);
-            echo json_encode(["error" => "Tenant ID header is missing."]);
-            return;
-        }
+        $tenantId = $this->getTenantId();
+        if (!$tenantId) return;
 
         $data = json_decode(file_get_contents("php://input"), true);
-        if ($data === null || empty($data['quantity'])) {
+        if ($data === null || !isset($data['quantity'])) {
             http_response_code(400);
             echo json_encode(["error" => "Invalid JSON payload or missing quantity."]);
             return;
@@ -124,48 +80,26 @@ class InventoryController {
         
         $quantity = (int) $data['quantity'];
 
-        $sql = "UPDATE inventory SET quantity = ?, lastUpdated = NOW() WHERE itemId = ? AND tenantId = ?";
-        $stmt = $this->conn->prepare($sql);
-        $stmt->bind_param("iss", $quantity, $id, $tenantId);
-
-        if ($stmt->execute()) {
+        if ($this->inventoryModel->update($id, $tenantId, $quantity)) {
             http_response_code(200);
             echo json_encode(["message" => "Inventory item updated successfully."]);
         } else {
             http_response_code(500);
-            echo json_encode(["error" => "Error updating inventory item: " . $stmt->error]);
+            echo json_encode(["error" => "Error updating inventory item."]);
         }
     }
     
     public function deleteInventoryItem($id) {
         header("Content-Type: application/json");
-        header("Access-Control-Allow-Origin: *");
+        $tenantId = $this->getTenantId();
+        if (!$tenantId) return;
 
-        $requestMethod = $_SERVER["REQUEST_METHOD"];
-        if ($requestMethod !== 'DELETE') {
-            http_response_code(405);
-            echo json_encode(["error" => "Method not allowed."]);
-            return;
-        }
-
-        $tenantId = $_SERVER['HTTP_X_TENANT_ID'] ?? '';
-        if (empty($tenantId)) {
-            http_response_code(400);
-            echo json_encode(["error" => "Tenant ID header is missing."]);
-            return;
-        }
-
-        $sql = "DELETE FROM inventory WHERE itemId = ? AND tenantId = ?";
-        $stmt = $this->conn->prepare($sql);
-        $stmt->bind_param("ss", $id, $tenantId);
-
-        if ($stmt->execute()) {
+        if ($this->inventoryModel->delete($id, $tenantId)) {
             http_response_code(200);
             echo json_encode(["message" => "Inventory item deleted successfully."]);
         } else {
             http_response_code(500);
-            echo json_encode(["error" => "Error deleting inventory item: " . $stmt->error]);
+            echo json_encode(["error" => "Error deleting inventory item."]);
         }
     }
 }
-?>
